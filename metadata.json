@@ -1,0 +1,13 @@
+{
+  "uuid": "app-to-new-workspace@example.com",
+  "name": "App para Nova Área de Trabalho",
+  "description": "Redireciona aplicativos selecionados para uma nova área de trabalho vazia ao serem iniciados.",
+  "shell-version": [
+    "44",
+    "45",
+    "46",
+    "48" // Compatibilidade com GNOME 48
+  ],
+  "url": "https://example.com/app-to-new-workspace",
+  "version": 1
+}
