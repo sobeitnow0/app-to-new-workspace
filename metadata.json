@@ -1,13 +1,9 @@
 {
-  "uuid": "app-to-new-workspace@example.com",
-  "name": "App para Nova Área de Trabalho",
-  "description": "Redireciona aplicativos selecionados para uma nova área de trabalho vazia ao serem iniciados.",
-  "shell-version": [
-    "44",
-    "45",
-    "46",
-    "48" // Compatibilidade com GNOME 48
-  ],
-  "url": "https://example.com/app-to-new-workspace",
-  "version": 1
+  "uuid": "apptonewworkspace@sobeit.com",
+  "name": "App to New Workspace",
+  "description": "Abre aplicativos selecionados em um novo workspace vazio, movendo e focando automaticamente.",
+  "shell-version": ["48"],
+  "version": 2,
+  "url": "https://github.com/sobeit/app-to-new-workspace",
+  "settings-schema": "apptonewworkspace@sobeit.com"
 }

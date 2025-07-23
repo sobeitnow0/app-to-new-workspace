@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="apptonewworkspace_sobeit_com" path="/org/gnome/shell/extensions/apptonewworkspace_sobeit_com/">
+    <key name="target-apps" type="as">
+      <default>[ 'org.gnome.Terminal', 'Alacritty', 'code', 'spotify' ]</default>
+      <summary>Lista de apps (app_id, wm_class ou parte do título)</summary>
+    </key>
+    <key name="enable-logging" type="b">
+      <default>false</default>
+      <summary>Habilitar logs de depuração</summary>
+    </key>
+  </schema>
+</schemalist>

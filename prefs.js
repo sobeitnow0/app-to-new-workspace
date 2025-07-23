@@ -1,94 +1,161 @@
-// prefs.js - Interface de usuário para as preferências da extensão
+// prefs.js
+import Adw from 'gi://Adw';
+import Gtk from 'gi://Gtk';
+import GObject from 'gi://GObject';
+import Gio from 'gi://Gio';
 
-// Importa os módulos necessários para a interface de preferências
-const Me = imports.misc.extensionUtils.getCurrentExtension();
-const Gtk = imports.gi.Gtk;
-const Gio = imports.gi.Gio;
-const Adw = imports.gi.Adw; // Para widgets modernos do GNOME (GTK4)
-const GLib = imports.gi.GLib;
+import * as Extension from './extension.js';
 
-// Variável para armazenar as configurações
-let _settings;
+const SettingsRow = GObject.registerClass(
+class SettingsRow extends Adw.PreferencesRow {
+    constructor(settings) {
+        super();
 
-// Função para construir a interface de preferências
-function buildPrefsWidget() {
-    // Carrega as configurações da extensão
-    const schemaSource = Gio.SettingsSchemaSource.new_from_directory(
-        Me.dir.get_child('schemas').get_path(),
-        Gio.SettingsSchemaSource.get_default(),
-        false
-    );
+        this.settings = settings;
 
-    const schema = schemaSource.lookup('org.gnome.shell.extensions.app-to-new-workspace', true);
-    if (!schema) {
-        throw new Error('Esquema GSettings não encontrado. Verifique o arquivo gschema.xml.');
+        this.box = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 10,
+            margin_start: 10,
+            margin_end: 10,
+            margin_top: 10,
+            margin_bottom: 10
+        });
+
+        this.entry = new Gtk.Entry({
+            hexpand: true,
+            placeholder_text: 'Ex: code, spotify, Alacritty'
+        });
+        this.button = new Gtk.Button({
+            label: 'Remover',
+            valign: Gtk.Align.CENTER
+        });
+
+        this.box.append(this.entry);
+        this.box.append(this.button);
+
+        this.set_child(this.box);
+
+        this.button.connect('clicked', () => {
+            const current = this.settings.get_strv('target-apps');
+            const filtered = current.filter(app => app !== this.entry.text);
+            this.settings.set_strv('target-apps', filtered);
+            this.destroy();
+        });
     }
-    _settings = new Gio.Settings({ settings_schema: schema });
 
-    // Cria o widget principal da janela de preferências (Adw.PreferencesWindow para GTK4)
-    const prefsWindow = new Adw.PreferencesWindow({
-        title: 'Preferências do Redirecionador de Aplicativos',
-        modal: true,
-        resizable: false,
-    });
+    setText(text) {
+        this.entry.text = text;
+    }
+});
 
-    // Cria uma página de preferências
-    const page = new Adw.PreferencesPage();
-    prefsWindow.add(page);
+const PreferencesPage = GObject.registerClass(
+class PreferencesPage extends Adw.PreferencesPage {
+    constructor(settings) {
+        super();
 
-    // Cria um grupo para as opções
-    const group = new Adw.PreferencesGroup({
-        title: 'Aplicativos para Redirecionar',
-        description: 'Selecione os aplicativos que sempre serão abertos em uma nova área de trabalho vazia.'
-    });
-    page.add(group);
+        this.settings = settings;
 
-    // Obtém todos os aplicativos instalados no sistema
-    const allApps = Gio.AppInfo.get_all();
-    // Filtra para obter apenas aplicativos que podem ser lançados
-    const launchableApps = allApps.filter(app => app.should_show());
-    // Ordena os aplicativos por nome
-    launchableApps.sort((a, b) => GLib.strcasecmp(a.get_display_name(), b.get_display_name()));
+        // Seção: Apps
+        const appsGroup = new Adw.PreferencesGroup();
+        appsGroup.title = 'Aplicativos Alvo';
 
-    // Obtém os IDs dos aplicativos atualmente selecionados para redirecionamento
-    let appsToRedirect = _settings.get_strv('applications-to-redirect');
+        // Lista de apps
+        this.listBox = new Gtk.ListBox();
+        this.listBox.selection_mode = Gtk.SelectionMode.NONE;
+        this.listBox.add_css_class('boxed-list');
+        appsGroup.add(this.listBox);
 
-    // Cria um dicionário para verificar rapidamente se um app está selecionado
-    const selectedAppsMap = new Set(appsToRedirect);
-
-    // Para cada aplicativo, cria uma linha de preferência com um switch
-    launchableApps.forEach(app => {
-        const appName = app.get_display_name();
-        const appId = app.get_id(); // O ID do aplicativo (ex: 'firefox.desktop')
-
-        const row = new Adw.ActionRow({
-            title: appName,
+        // Campo para adicionar novo
+        const addBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 10,
+            margin_start: 10,
+            margin_end: 10,
+            margin_bottom: 10
         });
 
-        const appSwitch = new Gtk.Switch({
-            active: selectedAppsMap.has(appId), // Define o estado inicial do switch
-            valign: Gtk.Align.CENTER,
+        this.newEntry = new Gtk.Entry({
+            placeholder_text: 'Adicionar novo app (app_id, wm_class ou título)',
+            hexpand: true
         });
 
-        // Conecta o switch ao evento 'notify::active' para atualizar as configurações
-        appSwitch.connect('notify::active', () => {
-            if (appSwitch.active) {
-                // Adiciona o ID do aplicativo se o switch estiver ativo
-                appsToRedirect.push(appId);
-            } else {
-                // Remove o ID do aplicativo se o switch estiver inativo
-                appsToRedirect = appsToRedirect.filter(id => id !== appId);
-            }
-            // Salva a lista atualizada de IDs de aplicativos
-            _settings.set_strv('applications-to-redirect', appsToRedirect);
-            log(`[${Me.metadata.name}] Aplicativos para redirecionar atualizados: ${appsToRedirect.join(', ')}`);
+        this.addButton = new Gtk.Button({
+            label: 'Adicionar',
+            valign: Gtk.Align.CENTER
         });
 
-        row.add_suffix(appSwitch); // Adiciona o switch à direita da linha
-        row.set_activatable_widget(appSwitch); // Torna o switch ativável ao clicar na linha
-        group.add(row); // Adiciona a linha ao grupo
-    });
+        addBox.append(this.newEntry);
+        addBox.append(this.addButton);
+        appsGroup.add(addBox);
 
-    // Retorna o widget principal da janela de preferências
-    return prefsWindow;
+        this.add(appsGroup);
+
+        // Seção: Depuração
+        const debugGroup = new Adw.PreferencesGroup();
+        debugGroup.title = 'Depuração';
+
+        const loggingSwitch = new Gtk.Switch({
+            active: this.settings.get_boolean('enable-logging'),
+            valign: Gtk.Align.CENTER
+        });
+
+        const loggingRow = new Adw.ActionRow();
+        loggingRow.title = 'Habilitar logs';
+        loggingRow.subtitle = 'Mostra logs no journalctl (útil para depuração)';
+        loggingRow.add_suffix(loggingSwitch);
+        loggingRow.activatable_widget = loggingSwitch;
+
+        debugGroup.add(loggingRow);
+        this.add(debugGroup);
+
+        // Conectar sinais
+        this.addButton.connect('clicked', () => this.onAddApp());
+        this.newEntry.connect('activate', () => this.onAddApp());
+
+        loggingSwitch.connect('notify::active', (sw) => {
+            this.settings.set_boolean('enable-logging', sw.active);
+        });
+
+        // Carregar apps existentes
+        this.loadApps();
+    }
+
+    onAddApp() {
+        const text = this.newEntry.text.trim();
+        if (!text) return;
+
+        const current = this.settings.get_strv('target-apps');
+        if (!current.includes(text)) {
+            this.settings.set_strv('target-apps', [...current, text]);
+            this.addAppRow(text);
+        }
+        this.newEntry.text = '';
+    }
+
+    loadApps() {
+        const apps = this.settings.get_strv('target-apps');
+        apps.forEach(app => this.addAppRow(app));
+    }
+
+    addAppRow(app) {
+        const row = new SettingsRow(this.settings);
+        row.setText(app);
+        this.listBox.append(row);
+    }
+});
+
+export default class AppInNewWorkspacePrefs {
+    constructor() {
+        this.settings = Extension.getSettings();
+    }
+
+    fillPreferencesWindow(window) {
+        window._settings = this.settings;
+
+        const page = new PreferencesPage(this.settings);
+        page.settings = this.settings;
+
+        window.add(page);
+    }
 }
