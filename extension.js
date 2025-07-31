@@ -22,7 +22,7 @@ const _handles = [];
 const _windowids_moved = {}; // Renomeado para refletir o novo propósito
 
 // Define o schema de configurações para a extensão
-const SETTINGS_SCHEMA = 'org.gnome.shell.extensions.your-extension-name'; // **Mude 'your-extension-name' para o nome real da sua extensão**
+const SETTINGS_SCHEMA = 'org.gnome.shell.extensions.app-to-new-workspace';
 const SETTINGS_KEY_APPS = 'apps-to-isolate';
 
 export default class Extension {
@@ -173,11 +173,6 @@ export default class Extension {
         }
         this.backToPreviousWorkspace(win);
     }
-
-    // Não precisamos mais dos eventos de maximizar/desmaximizar para o comportamento principal
-    // window_manager_size_change(act, change, rectold) {}
-    // window_manager_size_changed(act) {}
-    // window_manager_unminimize(act) {}
 
     enable() {
         this._mutterSettings = new Gio.Settings({ schema_id: 'org.gnome.mutter' });
