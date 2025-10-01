@@ -1,17 +1,12 @@
 {
-  "uuid": "app-to-new-workspace@sobeit.com",
-  "name": "App to New Workspace",
-  "description": "Moves selected applications to a new workspace upon launch.",
+  "uuid": "auto-new-workspace@sobeitnow0.com",
+  "name": "Auto New Workspace",
+  "description": "Move janelas de novas aplicações para o primeiro workspace vazio disponível, criando um novo se necessário.",
   "shell-version": [
-    "40",
-    "41",
-    "42",
-    "43",
-    "44",
     "45",
     "46",
     "47",
-    "48"
-  ],
-  "url": "https://github.com/yourusername/app-to-new-workspace"
+    "48",
+    "49"
+  ]
 }
