@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import GLib from 'gi://GLib'; // Adicionado para gerenciar o tempo (idle_add)
+import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -13,8 +13,11 @@ class WindowMover {
     constructor(settings) {
         this._settings = settings;
         this._appSystem = Shell.AppSystem.get_default();
-        this._appConfigs = new Set(); 
+        this._appConfigs = new Set();
         this._appData = new Map();
+        
+        // Conjunto para rastrear processos agendados e limpar depois
+        this._idleIds = new Set();
 
         this._appSystem.connectObject('installed-changed',
             () => this._updateAppData(), this);
@@ -59,6 +62,10 @@ class WindowMover {
     }
 
     destroy() {
+        // Limpeza rigorosa: remove qualquer ação pendente
+        this._idleIds.forEach(id => GLib.Source.remove(id));
+        this._idleIds.clear();
+
         this._appSystem.disconnectObject(this);
         this._settings.disconnectObject(this);
         this._settings = null;
@@ -67,15 +74,17 @@ class WindowMover {
         this._updateAppData();
     }
 
-    // --- CORREÇÃO: Uso de idle_add e activateWindow ---
     _moveWindow(window) {
         if (window.skip_taskbar || window.is_on_all_workspaces())
             return;
 
-        // GLib.idle_add espera o ciclo atual de processamento terminar antes de executar.
-        // Isso garante que a janela já foi totalmente "mapeada" antes de tentarmos movê-la.
-        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            // Verifica se a janela ainda existe (o usuário pode tê-la fechado muito rápido)
+        // Agendamos a movimentação para o próximo ciclo (idle)
+        // para garantir que a janela foi totalmente criada pelo sistema.
+        let idleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            // Removemos este ID da lista de rastreio pois já está executando
+            this._idleIds.delete(idleId);
+
+            // Verificação de segurança: a janela ainda existe?
             if (!window.get_compositor_private())
                 return GLib.SOURCE_REMOVE;
 
@@ -91,22 +100,22 @@ class WindowMover {
             if (isLastEmpty) {
                 targetWorkspace = lastWorkspace;
             } else {
+                // Cria novo workspace sem ativar imediatamente (ativaremos abaixo)
                 targetWorkspace = workspaceManager.append_new_workspace(false, 0);
             }
             
             // Move a janela
             window.change_workspace(targetWorkspace);
             
-            // Main.activateWindow é a função padrão do Shell para:
-            // 1. Mudar o foco para o workspace da janela
-            // 2. Trazer a janela para frente (raise)
-            // 3. Dar foco de teclado nela
+            // Garante foco, traz para frente e muda o usuário para o workspace
             Main.activateWindow(window);
 
-            return GLib.SOURCE_REMOVE; // Remove a função da fila de execução
+            return GLib.SOURCE_REMOVE;
         });
+        
+        // Adicionamos o ID à lista para poder cancelar no destroy() se necessário
+        this._idleIds.add(idleId);
     }
-    // -------------------------------------------------
 
     _appWindowsChanged(app) {
         const data = this._appData.get(app);
@@ -143,25 +152,4 @@ export default class AutoMoveExtension extends Extension {
     }
 
     _getCheckWorkspaceOverride(originalMethod) {
-        /* eslint-disable no-invalid-this */
-        return function () {
-            const keepAliveWorkspaces = [];
-            let foundNonEmpty = false;
-            for (let i = this._workspaces.length - 1; i >= 0; i--) {
-                if (!foundNonEmpty) {
-                    foundNonEmpty = this._workspaces[i].list_windows().some(
-                        w => !w.is_on_all_workspaces());
-                } else if (!this._workspaces[i]._keepAliveId) {
-                    keepAliveWorkspaces.push(this._workspaces[i]);
-                }
-            }
-
-            keepAliveWorkspaces.forEach(ws => (ws._keepAliveId = 1));
-            originalMethod.call(this);
-            keepAliveWorkspaces.forEach(ws => delete ws._keepAliveId);
-
-            return false;
-        };
-        /* eslint-enable no-invalid-this */
-    }
-}
+        /* eslint-disable no

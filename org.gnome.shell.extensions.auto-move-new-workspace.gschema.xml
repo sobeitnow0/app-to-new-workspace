@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist> <schema id="org.gnome.shell.extensions.auto-move-new-workspace" path="/org/gnome/shell/extensions/auto-move-new-workspace/">
+    <key name="application-list" type="as">
+      <default>[ ]</default>
+      <summary>Application list</summary>
+      <description>Lista de IDs de aplicativos para mover para novos workspaces.</description>
+    </key>
+  </schema>
+</schemalist>
