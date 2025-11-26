@@ -1,12 +1,9 @@
 {
-  "uuid": "auto-new-workspace@sobeitnow0.com",
-  "name": "Auto New Workspace",
-  "description": "Move janelas de novas aplicações para o primeiro workspace vazio disponível, criando um novo se necessário.",
-  "shell-version": [
-    "45",
-    "46",
-    "47",
-    "48",
-    "49"
-  ]
+  "name": "Auto Move to New Workspace",
+  "description": "Abre os aplicativos selecionados automaticamente em um novo workspace vazio.",
+  "uuid": "auto-move-new-workspace@sobeitnow",
+  "shell-version": [ "45", "46", "47", "49" ],
+  "settings-schema": "org.gnome.shell.extensions.auto-move-windows",
+  "original-authors": [ "sobeitnow" ],
+  "url": "https://github.com/sobeitnow"
 }
