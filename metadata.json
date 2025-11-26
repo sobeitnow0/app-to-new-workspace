@@ -5,6 +5,6 @@
   "shell-version": [ "45", "46", "47", "49" ],
   "settings-schema": "org.gnome.shell.extensions.auto-move-windows",
   "original-authors": [ "sobeitnow" ],
-  "url": "https://github.com/sobeitnow/auto-move-new-workspace",
+  "url": "https://github.com/sobeitnow0/Auto-Move-to-New-Workspace",
   "license": "GPL-2.0-or-later"
 }
