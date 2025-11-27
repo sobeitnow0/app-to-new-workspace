@@ -12,7 +12,7 @@ class WindowMover {
         this._appConfigs = new Set();
         this._appData = new Map();
         
-        // CORREÇÃO DO LOOP: Uma lista para lembrar quem já foi movido
+        // Mantemos a "vacina" contra loops infinitos
         this._processedWindows = new WeakSet();
 
         this._appSystem.connectObject('installed-changed',
@@ -64,17 +64,22 @@ class WindowMover {
     }
 
     _moveWindow(window) {
-        // SEGURANÇA 1: Se já movemos essa janela, ignora imediatamente.
         if (this._processedWindows.has(window))
             return;
 
         if (window.skip_taskbar || window.is_on_all_workspaces())
             return;
 
-        // Marca a janela como processada para evitar o loop dos 50 workspaces
         this._processedWindows.add(window);
 
-        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+        // --- MUDANÇA AQUI ---
+        // Trocamos GLib.idle_add por GLib.timeout_add
+        // 100ms de atraso é imperceptível para o olho humano, 
+        // mas é uma eternidade para o processador, permitindo que o 
+        // Mosaic termine o trabalho dele antes de nós agirmos.
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            
+            // Verifica se a janela ainda existe
             if (!window.get_compositor_private())
                 return GLib.SOURCE_REMOVE;
 
@@ -82,26 +87,25 @@ class WindowMover {
             const lastIndex = workspaceManager.n_workspaces - 1;
             const lastWorkspace = workspaceManager.get_workspace_by_index(lastIndex);
             
-            // SEGURANÇA 2: Ao checar se está vazio, ignoramos a própria janela
-            // caso ela já tenha "chegado" lá.
+            // Verifica se o último workspace está livre para nós
             const isLastEmpty = lastWorkspace.list_windows().every(w => 
                 w.is_on_all_workspaces() || w === window
             );
             
             let targetWorkspace;
             
-            // Se o último workspace está vazio (ou só tem a própria janela), usa ele.
             if (isLastEmpty) {
                 targetWorkspace = lastWorkspace;
             } else {
                 targetWorkspace = workspaceManager.append_new_workspace(false, 0);
             }
             
-            // Só move se realmente precisar (evita chamadas redundantes)
+            // Move a janela
             if (window.get_workspace() !== targetWorkspace) {
                 window.change_workspace(targetWorkspace);
             }
             
+            // Garante foco
             Main.activateWindow(window);
 
             return GLib.SOURCE_REMOVE;
