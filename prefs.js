@@ -13,6 +13,7 @@ import Gtk from 'gi://Gtk';
 import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 const SETTINGS_KEY = 'application-list';
+const WORKSPACE_MAX = 36; 
 
 class NewItem extends GObject.Object {}
 GObject.registerClass(NewItem);
@@ -44,11 +45,10 @@ class Rule extends GObject.Object {
             'app-info', null, null,
             GObject.ParamFlags.READWRITE,
             GioUnix.DesktopAppInfo),
-        // Mantemos a propriedade workspace mas não a exibimos, apenas para compatibilidade interna
         'workspace': GObject.ParamSpec.uint(
             'workspace', null, null,
             GObject.ParamFlags.READWRITE,
-            1, 36, 1),
+            1, WORKSPACE_MAX, 1),
     };
 
     static {
@@ -79,7 +79,6 @@ class RulesList extends GObject.Object {
     append(appInfo) {
         const pos = this.#rules.length;
 
-        // Hardcoded workspace 1, pois a extensão ignora o numero agora
         this.#rules.push(new Rule({appInfo, workspace: 1}));
         this.#saveRules();
 
@@ -97,11 +96,19 @@ class RulesList extends GObject.Object {
         this.items_changed(pos, 1, 0);
     }
 
+    changeWorkspace(id, workspace) {
+        const pos = this.#rules.findIndex(r => r.appInfo.get_id() === id);
+        if (pos < 0)
+            return;
+
+        this.#rules[pos].set({workspace});
+        this.#saveRules();
+    }
+
     #saveRules() {
         this.#settings.block_signal_handler(this.#changedId);
-        // Salva sempre com :1 para manter compatibilidade com o schema XML
         this.#settings.set_strv(SETTINGS_KEY,
-            this.#rules.map(r => `${r.app_info.get_id()}:1`));
+            this.#rules.map(r => `${r.app_info.get_id()}:${r.workspace}`));
         this.#settings.unblock_signal_handler(this.#changedId);
     }
 
@@ -110,10 +117,10 @@ class RulesList extends GObject.Object {
 
         this.#rules = [];
         for (const stringRule of this.#settings.get_strv(SETTINGS_KEY)) {
-            const [id, _] = stringRule.split(':');
+            const [id, workspace] = stringRule.split(':');
             const appInfo = GioUnix.DesktopAppInfo.new(id);
             if (appInfo)
-                this.#rules.push(new Rule({appInfo, workspace: 1}));
+                this.#rules.push(new Rule({appInfo, workspace}));
             else
                 log(`Invalid ID ${id}`);
         }
@@ -140,12 +147,14 @@ class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
         this.install_action('rules.add', null, self => self._addNewRule());
         this.install_action('rules.remove', 's',
             (self, name, param) => self._rules.remove(param.unpack()));
+        this.install_action('rules.change-workspace', '(si)',
+            (self, name, param) => self._rules.changeWorkspace(...param.deepUnpack()));
     }
 
     constructor(settings) {
         super({
-            title: _('Aplicativos para Novo Workspace'),
-            description: _('Aplicativos selecionados abrirão automaticamente em um novo workspace vazio.'),
+            title: _('Application List'),
+            description: _('Apps added here will open in a new workspace.'),
         });
 
         this._settings = settings;
@@ -182,6 +191,29 @@ class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
     }
 }
 
+class WorkspaceSelector extends Gtk.Widget {
+    static [GObject.properties] = {
+        'number': GObject.ParamSpec.uint(
+            'number', null, null,
+            GObject.ParamFlags.READWRITE,
+            1, WORKSPACE_MAX, 1),
+    };
+
+    static {
+        GObject.registerClass(this);
+        this.set_layout_manager_type(Gtk.BoxLayout);
+    }
+
+    constructor() {
+        super();
+        // Widget mantido vazio ou simplificado se quiser, mas para manter a estrutura original:
+        // Como o workspaceNumber é ignorado pela extensão, não precisamos exibir os botões.
+        // Mas se quiser manter a compatibilidade visual do arquivo original, podemos deixar.
+        // Neste caso, vou ocultá-lo para limpar a interface, já que não usamos o número.
+        this.visible = false; 
+    }
+}
+
 class RuleRow extends Adw.ActionRow {
     static {
         GObject.registerClass(this);
@@ -202,8 +234,6 @@ class RuleRow extends Adw.ActionRow {
             pixel_size: 32,
         });
         this.add_prefix(icon);
-
-        // Removemos o seletor de Workspace aqui
 
         const button = new Gtk.Button({
             action_name: 'rules.remove',
@@ -234,7 +264,7 @@ class NewRuleRow extends Gtk.ListBoxRow {
             }),
         });
         this.update_property(
-            [Gtk.AccessibleProperty.LABEL], [_('Adicionar App')]);
+            [Gtk.AccessibleProperty.LABEL], [_('Add Rule')]);
     }
 }
 
@@ -269,8 +299,21 @@ class NewRuleDialog extends Gtk.AppChooserDialog {
     }
 }
 
+// --- AQUI ESTÁ A MUDANÇA EXIGIDA PELO REVISOR ---
 export default class AutoMovePrefs extends ExtensionPreferences {
-    getPreferencesWidget() {
-        return new AutoMoveSettingsWidget(this.getSettings());
+    fillPreferencesWindow(window) {
+        const settings = this.getSettings();
+        
+        // Criamos uma página de preferências do Adwaita
+        const page = new Adw.PreferencesPage();
+        
+        // Instanciamos nosso widget (que é um Adw.PreferencesGroup)
+        const group = new AutoMoveSettingsWidget(settings);
+        
+        // Adicionamos o Grupo na Página
+        page.add(group);
+        
+        // Adicionamos a Página na Janela
+        window.add(page);
     }
 }
