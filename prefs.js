@@ -1,6 +1,3 @@
-// SPDX-FileCopyrightText: 2012 Giovanni Campagna <gcampagna@src.gnome.org>
-// SPDX-FileCopyrightText: 2014 Florian Müllner <fmuellner@gnome.org>
-//
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Adw from 'gi://Adw';
@@ -78,28 +75,23 @@ class RulesList extends GObject.Object {
 
     append(appInfo) {
         const pos = this.#rules.length;
-
         this.#rules.push(new Rule({appInfo, workspace: 1}));
         this.#saveRules();
-
         this.items_changed(pos, 0, 1);
     }
 
     remove(id) {
         const pos = this.#rules.findIndex(r => r.appInfo.get_id() === id);
-        if (pos < 0)
-            return;
+        if (pos < 0) return;
 
         this.#rules.splice(pos, 1);
         this.#saveRules();
-
         this.items_changed(pos, 1, 0);
     }
 
     changeWorkspace(id, workspace) {
         const pos = this.#rules.findIndex(r => r.appInfo.get_id() === id);
-        if (pos < 0)
-            return;
+        if (pos < 0) return;
 
         this.#rules[pos].set({workspace});
         this.#saveRules();
@@ -114,15 +106,12 @@ class RulesList extends GObject.Object {
 
     #sync() {
         const removed = this.#rules.length;
-
         this.#rules = [];
         for (const stringRule of this.#settings.get_strv(SETTINGS_KEY)) {
             const [id, workspace] = stringRule.split(':');
             const appInfo = GioUnix.DesktopAppInfo.new(id);
             if (appInfo)
                 this.#rules.push(new Rule({appInfo, workspace}));
-            else
-                log(`Invalid ID ${id}`);
         }
         this.items_changed(0, removed, this.#rules.length);
     }
@@ -143,12 +132,6 @@ class RulesList extends GObject.Object {
 class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
     static {
         GObject.registerClass(this);
-
-        this.install_action('rules.add', null, self => self._addNewRule());
-        this.install_action('rules.remove', 's',
-            (self, name, param) => self._rules.remove(param.unpack()));
-        this.install_action('rules.change-workspace', '(si)',
-            (self, name, param) => self._rules.changeWorkspace(...param.deepUnpack()));
     }
 
     constructor(settings) {
@@ -159,6 +142,26 @@ class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
 
         this._settings = settings;
         this._rules = new RulesList(this._settings);
+
+        // --- CORREÇÃO: Criação do Grupo de Ações ---
+        const actionGroup = new Gio.SimpleActionGroup();
+        this.insert_action_group('rules', actionGroup);
+
+        // Ação Adicionar
+        const addAction = new Gio.SimpleAction({ name: 'add' });
+        addAction.connect('activate', () => this._addNewRule());
+        actionGroup.add_action(addAction);
+
+        // Ação Remover
+        const removeAction = new Gio.SimpleAction({
+            name: 'remove',
+            parameter_type: new GLib.VariantType('s')
+        });
+        removeAction.connect('activate', (_, param) => {
+            this._rules.remove(param.unpack());
+        });
+        actionGroup.add_action(removeAction);
+        // -------------------------------------------
 
         const store = new Gio.ListStore({item_type: Gio.ListModel});
         const listModel = new Gtk.FlattenListModel({model: store});
@@ -191,29 +194,6 @@ class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
     }
 }
 
-class WorkspaceSelector extends Gtk.Widget {
-    static [GObject.properties] = {
-        'number': GObject.ParamSpec.uint(
-            'number', null, null,
-            GObject.ParamFlags.READWRITE,
-            1, WORKSPACE_MAX, 1),
-    };
-
-    static {
-        GObject.registerClass(this);
-        this.set_layout_manager_type(Gtk.BoxLayout);
-    }
-
-    constructor() {
-        super();
-        // Widget mantido vazio ou simplificado se quiser, mas para manter a estrutura original:
-        // Como o workspaceNumber é ignorado pela extensão, não precisamos exibir os botões.
-        // Mas se quiser manter a compatibilidade visual do arquivo original, podemos deixar.
-        // Neste caso, vou ocultá-lo para limpar a interface, já que não usamos o número.
-        this.visible = false; 
-    }
-}
-
 class RuleRow extends Adw.ActionRow {
     static {
         GObject.registerClass(this);
@@ -236,7 +216,7 @@ class RuleRow extends Adw.ActionRow {
         this.add_prefix(icon);
 
         const button = new Gtk.Button({
-            action_name: 'rules.remove',
+            action_name: 'rules.remove', // Chama a ação 'remove' do grupo 'rules'
             action_target: new GLib.Variant('s', id),
             icon_name: 'edit-delete-symbolic',
             has_frame: false,
@@ -253,7 +233,7 @@ class NewRuleRow extends Gtk.ListBoxRow {
 
     constructor() {
         super({
-            action_name: 'rules.add',
+            action_name: 'rules.add', // Chama a ação 'add' do grupo 'rules'
             child: new Gtk.Image({
                 icon_name: 'list-add-symbolic',
                 pixel_size: 16,
@@ -299,21 +279,12 @@ class NewRuleDialog extends Gtk.AppChooserDialog {
     }
 }
 
-// --- AQUI ESTÁ A MUDANÇA EXIGIDA PELO REVISOR ---
 export default class AutoMovePrefs extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
-        
-        // Criamos uma página de preferências do Adwaita
         const page = new Adw.PreferencesPage();
-        
-        // Instanciamos nosso widget (que é um Adw.PreferencesGroup)
         const group = new AutoMoveSettingsWidget(settings);
-        
-        // Adicionamos o Grupo na Página
         page.add(group);
-        
-        // Adicionamos a Página na Janela
         window.add(page);
     }
 }
