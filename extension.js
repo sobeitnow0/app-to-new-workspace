@@ -1,11 +1,9 @@
-// SPDX-FileCopyrightText: 2011 Giovanni Campagna <gcampagna@src.gnome.org>
-// SPDX-FileCopyrightText: 2011 Alessandro Crismani <alessandro.crismani@gmail.com>
-// SPDX-FileCopyrightText: 2014 Florian Müllner <fmuellner@gnome.org>
-//
+cat <<EOF > extension.js
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
+import Meta from 'gi://Meta';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -15,6 +13,7 @@ class WindowMover {
         this._appSystem = Shell.AppSystem.get_default();
         this._appConfigs = new Set();
         this._appData = new Map();
+        this._processedWindows = new WeakSet();
 
         this._appSystem.connectObject('installed-changed',
             () => this._updateAppData(), this);
@@ -26,22 +25,16 @@ class WindowMover {
 
     _updateAppConfigs() {
         this._appConfigs.clear();
-
         this._settings.get_strv('application-list').forEach(v => {
             const [appId, _] = v.split(':');
-            if (appId) {
-                this._appConfigs.add(appId);
-            }
+            if (appId) this._appConfigs.add(appId);
         });
-
         this._updateAppData();
     }
 
     _updateAppData() {
         const ids = [...this._appConfigs];
-        
-        const removedApps = [...this._appData.keys()]
-            .filter(a => !ids.includes(a.id));
+        const removedApps = [...this._appData.keys()].filter(a => !ids.includes(a.id));
         removedApps.forEach(app => {
             app.disconnectObject(this);
             this._appData.delete(app);
@@ -52,8 +45,7 @@ class WindowMover {
             .filter(app => app && !this._appData.has(app));
             
         addedApps.forEach(app => {
-            app.connectObject('windows-changed',
-                this._appWindowsChanged.bind(this), this);
+            app.connectObject('windows-changed', this._appWindowsChanged.bind(this), this);
             this._appData.set(app, {windows: app.get_windows()});
         });
     }
@@ -62,44 +54,42 @@ class WindowMover {
         this._appSystem.disconnectObject(this);
         this._settings.disconnectObject(this);
         this._settings = null;
-
         this._appConfigs.clear();
         this._updateAppData();
     }
 
     _moveWindow(window) {
-        if (window.skip_taskbar || window.is_on_all_workspaces())
-            return;
+        if (this._processedWindows.has(window)) return;
+        if (window.skip_taskbar || window.is_on_all_workspaces()) return;
+        if (window.get_transient_for() !== null) return;
+        if (window.get_window_type() !== Meta.WindowType.NORMAL) return;
 
-        // Usamos idle_add simples para garantir que a janela foi criada
-        // e evitar o problema dela aparecer no fundo.
-        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            // Verificação básica se a janela ainda existe
-            if (!window.get_compositor_private())
-                return GLib.SOURCE_REMOVE;
+        this._processedWindows.add(window);
+
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            if (!window.get_compositor_private()) return GLib.SOURCE_REMOVE;
+            if (window.get_transient_for() !== null) return GLib.SOURCE_REMOVE;
 
             const workspaceManager = global.workspace_manager;
             const lastIndex = workspaceManager.n_workspaces - 1;
             const lastWorkspace = workspaceManager.get_workspace_by_index(lastIndex);
             
-            // Verifica se o último workspace está vazio
-            const isLastEmpty = lastWorkspace.list_windows().every(w => w.is_on_all_workspaces());
-
+            const isLastEmpty = lastWorkspace.list_windows().every(w => 
+                w.is_on_all_workspaces() || w === window
+            );
+            
             let targetWorkspace;
-
             if (isLastEmpty) {
                 targetWorkspace = lastWorkspace;
             } else {
-                // Cria novo workspace
                 targetWorkspace = workspaceManager.append_new_workspace(false, 0);
             }
             
-            // Move a janela
-            window.change_workspace(targetWorkspace);
+            if (window.get_workspace() !== targetWorkspace) {
+                window.change_workspace(targetWorkspace);
+            }
             
-            // Força o foco e traz para frente (Raise)
             Main.activateWindow(window);
-
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -107,7 +97,6 @@ class WindowMover {
     _appWindowsChanged(app) {
         const data = this._appData.get(app);
         const windows = app.get_windows();
-
         windows.push(...data.windows.filter(w => {
             return !windows.includes(w) && w.get_compositor_private() !== null;
         }));
@@ -117,7 +106,6 @@ class WindowMover {
                 this._moveWindow(window);
             });
         }
-        
         data.windows = windows;
     }
 }
@@ -125,8 +113,7 @@ class WindowMover {
 export default class AutoMoveExtension extends Extension {
     enable() {
         this._prevCheckWorkspaces = Main.wm._workspaceTracker._checkWorkspaces;
-        Main.wm._workspaceTracker._checkWorkspaces =
-            this._getCheckWorkspaceOverride(this._prevCheckWorkspaces);
+        Main.wm._workspaceTracker._checkWorkspaces = this._getCheckWorkspaceOverride(this._prevCheckWorkspaces);
         this._windowMover = new WindowMover(this.getSettings());
     }
 
@@ -139,25 +126,21 @@ export default class AutoMoveExtension extends Extension {
     }
 
     _getCheckWorkspaceOverride(originalMethod) {
-        /* eslint-disable no-invalid-this */
         return function () {
             const keepAliveWorkspaces = [];
             let foundNonEmpty = false;
             for (let i = this._workspaces.length - 1; i >= 0; i--) {
                 if (!foundNonEmpty) {
-                    foundNonEmpty = this._workspaces[i].list_windows().some(
-                        w => !w.is_on_all_workspaces());
+                    foundNonEmpty = this._workspaces[i].list_windows().some(w => !w.is_on_all_workspaces());
                 } else if (!this._workspaces[i]._keepAliveId) {
                     keepAliveWorkspaces.push(this._workspaces[i]);
                 }
             }
-
             keepAliveWorkspaces.forEach(ws => (ws._keepAliveId = 1));
             originalMethod.call(this);
             keepAliveWorkspaces.forEach(ws => delete ws._keepAliveId);
-
             return false;
         };
-        /* eslint-enable no-invalid-this */
     }
 }
+EOF
