@@ -2,6 +2,7 @@
 
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
+import Meta from 'gi://Meta'; // <--- Importamos Meta para verificar tipos de janela
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -12,7 +13,6 @@ class WindowMover {
         this._appConfigs = new Set();
         this._appData = new Map();
         
-        // Mantemos a "vacina" contra loops infinitos
         this._processedWindows = new WeakSet();
 
         this._appSystem.connectObject('installed-changed',
@@ -67,27 +67,36 @@ class WindowMover {
         if (this._processedWindows.has(window))
             return;
 
+        // --- FILTROS DE SEGURANÇA ---
+        
         if (window.skip_taskbar || window.is_on_all_workspaces())
             return;
 
+        // 1. Verifica se a janela tem uma "mãe" (transient_for).
+        // Se tiver, ela é uma filha (pop-up, diálogo) e deve ficar junto da mãe.
+        if (window.get_transient_for() !== null)
+            return;
+
+        // 2. Verifica o tipo da janela.
+        // Se não for uma janela NORMAL (ex: é um DIALOG ou UTILITY), ignoramos.
+        if (window.get_window_type() !== Meta.WindowType.NORMAL)
+            return;
+
+        // ---------------------------
+
         this._processedWindows.add(window);
 
-        // --- MUDANÇA AQUI ---
-        // Trocamos GLib.idle_add por GLib.timeout_add
-        // 100ms de atraso é imperceptível para o olho humano, 
-        // mas é uma eternidade para o processador, permitindo que o 
-        // Mosaic termine o trabalho dele antes de nós agirmos.
+        // Usamos o timeout de 100ms (compatibilidade com Mosaic + tempo para propriedades carregarem)
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
             
-            // Verifica se a janela ainda existe
-            if (!window.get_compositor_private())
-                return GLib.SOURCE_REMOVE;
+            // Verificação dupla de segurança dentro do timeout (pois propriedades podem mudar)
+            if (!window.get_compositor_private()) return GLib.SOURCE_REMOVE;
+            if (window.get_transient_for() !== null) return GLib.SOURCE_REMOVE;
 
             const workspaceManager = global.workspace_manager;
             const lastIndex = workspaceManager.n_workspaces - 1;
             const lastWorkspace = workspaceManager.get_workspace_by_index(lastIndex);
             
-            // Verifica se o último workspace está livre para nós
             const isLastEmpty = lastWorkspace.list_windows().every(w => 
                 w.is_on_all_workspaces() || w === window
             );
@@ -100,12 +109,10 @@ class WindowMover {
                 targetWorkspace = workspaceManager.append_new_workspace(false, 0);
             }
             
-            // Move a janela
             if (window.get_workspace() !== targetWorkspace) {
                 window.change_workspace(targetWorkspace);
             }
             
-            // Garante foco
             Main.activateWindow(window);
 
             return GLib.SOURCE_REMOVE;
