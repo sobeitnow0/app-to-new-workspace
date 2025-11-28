@@ -1,8 +1,11 @@
+// SPDX-FileCopyrightText: 2011 Giovanni Campagna <gcampagna@src.gnome.org>
+// SPDX-FileCopyrightText: 2011 Alessandro Crismani <alessandro.crismani@gmail.com>
+// SPDX-FileCopyrightText: 2014 Florian Müllner <fmuellner@gnome.org>
+//
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
-import Meta from 'gi://Meta'; // <--- Importamos Meta para verificar tipos de janela
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -12,8 +15,6 @@ class WindowMover {
         this._appSystem = Shell.AppSystem.get_default();
         this._appConfigs = new Set();
         this._appData = new Map();
-        
-        this._processedWindows = new WeakSet();
 
         this._appSystem.connectObject('installed-changed',
             () => this._updateAppData(), this);
@@ -25,20 +26,22 @@ class WindowMover {
 
     _updateAppConfigs() {
         this._appConfigs.clear();
+
         this._settings.get_strv('application-list').forEach(v => {
             const [appId, _] = v.split(':');
             if (appId) {
                 this._appConfigs.add(appId);
             }
         });
+
         this._updateAppData();
     }
 
     _updateAppData() {
         const ids = [...this._appConfigs];
+        
         const removedApps = [...this._appData.keys()]
             .filter(a => !ids.includes(a.id));
-        
         removedApps.forEach(app => {
             app.disconnectObject(this);
             this._appData.delete(app);
@@ -59,60 +62,42 @@ class WindowMover {
         this._appSystem.disconnectObject(this);
         this._settings.disconnectObject(this);
         this._settings = null;
+
         this._appConfigs.clear();
         this._updateAppData();
     }
 
     _moveWindow(window) {
-        if (this._processedWindows.has(window))
-            return;
-
-        // --- FILTROS DE SEGURANÇA ---
-        
         if (window.skip_taskbar || window.is_on_all_workspaces())
             return;
 
-        // 1. Verifica se a janela tem uma "mãe" (transient_for).
-        // Se tiver, ela é uma filha (pop-up, diálogo) e deve ficar junto da mãe.
-        if (window.get_transient_for() !== null)
-            return;
-
-        // 2. Verifica o tipo da janela.
-        // Se não for uma janela NORMAL (ex: é um DIALOG ou UTILITY), ignoramos.
-        if (window.get_window_type() !== Meta.WindowType.NORMAL)
-            return;
-
-        // ---------------------------
-
-        this._processedWindows.add(window);
-
-        // Usamos o timeout de 100ms (compatibilidade com Mosaic + tempo para propriedades carregarem)
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-            
-            // Verificação dupla de segurança dentro do timeout (pois propriedades podem mudar)
-            if (!window.get_compositor_private()) return GLib.SOURCE_REMOVE;
-            if (window.get_transient_for() !== null) return GLib.SOURCE_REMOVE;
+        // Usamos idle_add simples para garantir que a janela foi criada
+        // e evitar o problema dela aparecer no fundo.
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            // Verificação básica se a janela ainda existe
+            if (!window.get_compositor_private())
+                return GLib.SOURCE_REMOVE;
 
             const workspaceManager = global.workspace_manager;
             const lastIndex = workspaceManager.n_workspaces - 1;
             const lastWorkspace = workspaceManager.get_workspace_by_index(lastIndex);
             
-            const isLastEmpty = lastWorkspace.list_windows().every(w => 
-                w.is_on_all_workspaces() || w === window
-            );
-            
+            // Verifica se o último workspace está vazio
+            const isLastEmpty = lastWorkspace.list_windows().every(w => w.is_on_all_workspaces());
+
             let targetWorkspace;
-            
+
             if (isLastEmpty) {
                 targetWorkspace = lastWorkspace;
             } else {
+                // Cria novo workspace
                 targetWorkspace = workspaceManager.append_new_workspace(false, 0);
             }
             
-            if (window.get_workspace() !== targetWorkspace) {
-                window.change_workspace(targetWorkspace);
-            }
+            // Move a janela
+            window.change_workspace(targetWorkspace);
             
+            // Força o foco e traz para frente (Raise)
             Main.activateWindow(window);
 
             return GLib.SOURCE_REMOVE;
@@ -154,6 +139,7 @@ export default class AutoMoveExtension extends Extension {
     }
 
     _getCheckWorkspaceOverride(originalMethod) {
+        /* eslint-disable no-invalid-this */
         return function () {
             const keepAliveWorkspaces = [];
             let foundNonEmpty = false;
@@ -172,5 +158,6 @@ export default class AutoMoveExtension extends Extension {
 
             return false;
         };
+        /* eslint-enable no-invalid-this */
     }
 }
