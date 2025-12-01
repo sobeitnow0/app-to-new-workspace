@@ -3,7 +3,7 @@
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import Meta from 'gi://Meta';
-import Gio from 'gi://Gio'; // <--- Adicionado Gio para carregar settings
+import Gio from 'gi://Gio'; 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -72,7 +72,10 @@ class WindowMover {
 
         this._processedWindows.add(window);
 
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+        // --- CORREÇÃO DO BUG DO ÍCONE PEQUENO ---
+        // Aumentamos de 100 para 300ms.
+        // Isso permite que a animação de "Zoom" do GNOME termine antes de movermos a janela.
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
             if (!window.get_compositor_private()) return GLib.SOURCE_REMOVE;
             if (window.get_transient_for() !== null) return GLib.SOURCE_REMOVE;
 
@@ -95,6 +98,7 @@ class WindowMover {
                 window.change_workspace(targetWorkspace);
             }
             
+            // Ativa a janela para garantir foco e troca de workspace visual
             Main.activateWindow(window);
 
             return GLib.SOURCE_REMOVE;
@@ -120,12 +124,11 @@ class WindowMover {
 }
 
 export default class AutoMoveExtension extends Extension {
-    // Função auxiliar para carregar settings mesmo se o GNOME estiver perdido
+    // Carregamento seguro de configurações
     _getSettingsSafe() {
         try {
             return this.getSettings();
         } catch (e) {
-            // Fallback manual: busca o schema na pasta da extensão
             const schemaId = this.metadata['settings-schema'];
             const schemaSource = Gio.SettingsSchemaSource.new_from_directory(
                 this.path,
@@ -145,7 +148,6 @@ export default class AutoMoveExtension extends Extension {
         Main.wm._workspaceTracker._checkWorkspaces =
             this._getCheckWorkspaceOverride(this._prevCheckWorkspaces);
         
-        // Usamos nossa função segura aqui ao invés de this.getSettings() direto
         this._windowMover = new WindowMover(this._getSettingsSafe());
     }
 
