@@ -64,18 +64,39 @@ class WindowMover {
         this._updateAppData();
     }
 
-    _moveWindow(window) {
+    // Agora aceitamos 'app' como argumento para verificar irmãos
+    _moveWindow(window, app) {
         if (this._processedWindows.has(window)) return;
+        
+        // Filtros básicos
         if (window.skip_taskbar || window.is_on_all_workspaces()) return;
-        if (window.get_transient_for() !== null) return;
+        if (window.get_transient_for() !== null) return; // Já é filha oficial
         if (window.get_window_type() !== Meta.WindowType.NORMAL) return;
+
+        // --- NOVA LÓGICA: VÍNCULO FAMILIAR ---
+        // Verifica se este app já tem OUTRA janela no workspace atual.
+        // Se tiver, assumimos que esta nova janela é filha/complementar e NÃO movemos.
+        const currentWorkspace = window.get_workspace();
+        const hasSibling = app.get_windows().some(w => 
+            w !== window && // Não é ela mesma
+            w.get_workspace() === currentWorkspace && // Está no mesmo desktop
+            !w.skip_taskbar && // É uma janela relevante
+            !w.is_on_all_workspaces()
+        );
+
+        if (hasSibling) {
+            // Encontramos uma janela "mãe" ou irmã no mesmo lugar. 
+            // Marcamos como processada para não tentar de novo e encerramos.
+            this._processedWindows.add(window);
+            return; 
+        }
+        // -------------------------------------
 
         this._processedWindows.add(window);
 
-        // --- CORREÇÃO DO BUG DO ÍCONE PEQUENO ---
-        // Aumentamos de 100 para 300ms.
-        // Isso permite que a animação de "Zoom" do GNOME termine antes de movermos a janela.
+        // Timeout de 300ms (mantido para animações suaves)
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+            // Re-verificações de segurança pós-timeout
             if (!window.get_compositor_private()) return GLib.SOURCE_REMOVE;
             if (window.get_transient_for() !== null) return GLib.SOURCE_REMOVE;
 
@@ -98,7 +119,6 @@ class WindowMover {
                 window.change_workspace(targetWorkspace);
             }
             
-            // Ativa a janela para garantir foco e troca de workspace visual
             Main.activateWindow(window);
 
             return GLib.SOURCE_REMOVE;
@@ -115,7 +135,8 @@ class WindowMover {
 
         if (this._appConfigs.has(app.id)) {
             windows.filter(w => !data.windows.includes(w)).forEach(window => {
-                this._moveWindow(window);
+                // Passamos 'app' para a função de mover
+                this._moveWindow(window, app);
             });
         }
         
@@ -124,7 +145,6 @@ class WindowMover {
 }
 
 export default class AutoMoveExtension extends Extension {
-    // Carregamento seguro de configurações
     _getSettingsSafe() {
         try {
             return this.getSettings();
