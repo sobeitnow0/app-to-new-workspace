@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.auto-move-new-workspace" path="/org/gnome/shell/extensions/auto-move-new-workspace/">
+    
+    <key name="application-list" type="as">
+      <default>[ ]</default>
+      <summary>Application list</summary>
+      <description>Lista de IDs de aplicativos.</description>
+    </key>
+
+    <key name="focus-new-workspace" type="b">
+      <default>false</default>
+      <summary>Focar no novo desktop</summary>
+      <description>Se true, a tela muda para o novo desktop. Se false, você continua onde está.</description>
+    </key>
+
+  </schema>
+</schemalist>

@@ -3,17 +3,17 @@
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import Meta from 'gi://Meta';
-import Gio from 'gi://Gio'; 
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
+import Gio from 'gi://Gio';
+import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 class WindowMover {
     constructor(settings) {
         this._settings = settings;
         this._appSystem = Shell.AppSystem.get_default();
-        this._appConfigs = new Set();
+
+        this._appConfigs = new Map();
         this._appData = new Map();
-        
         this._processedWindows = new WeakSet();
 
         this._appSystem.connectObject('installed-changed',
@@ -27,19 +27,20 @@ class WindowMover {
     _updateAppConfigs() {
         this._appConfigs.clear();
         this._settings.get_strv('application-list').forEach(v => {
-            const [appId, _] = v.split(':');
+            const [appId, _, bgString] = v.split(':');
             if (appId) {
-                this._appConfigs.add(appId);
+                const isBackground = (bgString === 'true');
+                this._appConfigs.set(appId, { background: isBackground });
             }
         });
         this._updateAppData();
     }
 
     _updateAppData() {
-        const ids = [...this._appConfigs];
+        const ids = [...this._appConfigs.keys()];
         const removedApps = [...this._appData.keys()]
             .filter(a => !ids.includes(a.id));
-        
+
         removedApps.forEach(app => {
             app.disconnectObject(this);
             this._appData.delete(app);
@@ -48,11 +49,11 @@ class WindowMover {
         const addedApps = ids
             .map(id => this._appSystem.lookup_app(id))
             .filter(app => app && !this._appData.has(app));
-            
+
         addedApps.forEach(app => {
             app.connectObject('windows-changed',
                 this._appWindowsChanged.bind(this), this);
-            this._appData.set(app, {windows: app.get_windows()});
+            this._appData.set(app, { windows: app.get_windows() });
         });
     }
 
@@ -64,62 +65,72 @@ class WindowMover {
         this._updateAppData();
     }
 
-    // Agora aceitamos 'app' como argumento para verificar irmãos
     _moveWindow(window, app) {
         if (this._processedWindows.has(window)) return;
-        
-        // Filtros básicos
-        if (window.skip_taskbar || window.is_on_all_workspaces()) return;
-        if (window.get_transient_for() !== null) return; // Já é filha oficial
-        if (window.get_window_type() !== Meta.WindowType.NORMAL) return;
 
-        // --- NOVA LÓGICA: VÍNCULO FAMILIAR ---
-        // Verifica se este app já tem OUTRA janela no workspace atual.
-        // Se tiver, assumimos que esta nova janela é filha/complementar e NÃO movemos.
+        if (window.skip_taskbar || window.is_on_all_workspaces()) return;
+        if (window.get_transient_for() !== null) return;
+        if (window.get_window_type() !== Meta.WindowType.NORMAL) return;
+        if (window.is_above()) return;
+
         const currentWorkspace = window.get_workspace();
-        const hasSibling = app.get_windows().some(w => 
-            w !== window && // Não é ela mesma
-            w.get_workspace() === currentWorkspace && // Está no mesmo desktop
-            !w.skip_taskbar && // É uma janela relevante
+        const hasSibling = app.get_windows().some(w =>
+            w !== window &&
+            w.get_workspace() === currentWorkspace &&
+            !w.skip_taskbar &&
             !w.is_on_all_workspaces()
         );
 
         if (hasSibling) {
-            // Encontramos uma janela "mãe" ou irmã no mesmo lugar. 
-            // Marcamos como processada para não tentar de novo e encerramos.
             this._processedWindows.add(window);
-            return; 
+            return;
         }
-        // -------------------------------------
 
         this._processedWindows.add(window);
 
-        // Timeout de 300ms (mantido para animações suaves)
+        const config = this._appConfigs.get(app.get_id());
+        const moveInBackground = config ? config.background : false;
+
+        // Delay para garantir que a janela e o workspace estão prontos
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-            // Re-verificações de segurança pós-timeout
             if (!window.get_compositor_private()) return GLib.SOURCE_REMOVE;
             if (window.get_transient_for() !== null) return GLib.SOURCE_REMOVE;
 
             const workspaceManager = global.workspace_manager;
             const lastIndex = workspaceManager.n_workspaces - 1;
             const lastWorkspace = workspaceManager.get_workspace_by_index(lastIndex);
-            
-            const isLastEmpty = lastWorkspace.list_windows().every(w => 
-                w.is_on_all_workspaces() || w === window
+
+            const isLastEmpty = lastWorkspace.list_windows().every(w =>
+                w.is_on_all_workspaces() || w === window || w.is_above()
             );
-            
+
             let targetWorkspace;
             if (isLastEmpty) {
                 targetWorkspace = lastWorkspace;
             } else {
                 targetWorkspace = workspaceManager.append_new_workspace(false, 0);
             }
-            
+
             if (window.get_workspace() !== targetWorkspace) {
+                // 1. Memoriza onde estamos
+                const workspaceDeOrigem = workspaceManager.get_active_workspace();
+
+                // 2. Move a janela
                 window.change_workspace(targetWorkspace);
+
+                // 3. Verifica se deve focar
+                const globalFocus = this._settings.get_boolean('focus-new-workspace');
+
+                if (globalFocus && !moveInBackground) {
+                    Main.activateWindow(window);
+                } else {
+                    // Força a volta se a opção estiver desligada
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                        workspaceDeOrigem.activate(global.get_current_time());
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
             }
-            
-            Main.activateWindow(window);
 
             return GLib.SOURCE_REMOVE;
         });
@@ -135,11 +146,10 @@ class WindowMover {
 
         if (this._appConfigs.has(app.id)) {
             windows.filter(w => !data.windows.includes(w)).forEach(window => {
-                // Passamos 'app' para a função de mover
                 this._moveWindow(window, app);
             });
         }
-        
+
         data.windows = windows;
     }
 }
@@ -164,39 +174,15 @@ export default class AutoMoveExtension extends Extension {
     }
 
     enable() {
-        this._prevCheckWorkspaces = Main.wm._workspaceTracker._checkWorkspaces;
-        Main.wm._workspaceTracker._checkWorkspaces =
-            this._getCheckWorkspaceOverride(this._prevCheckWorkspaces);
-        
+        // REMOVIDO: A linha que travava o gerenciador de workspaces
         this._windowMover = new WindowMover(this._getSettingsSafe());
     }
 
     disable() {
-        Main.wm._workspaceTracker._checkWorkspaces = this._prevCheckWorkspaces;
+        // REMOVIDO: A linha que restaurava o gerenciador (não é mais necessária)
         if (this._windowMover) {
             this._windowMover.destroy();
             delete this._windowMover;
         }
-    }
-
-    _getCheckWorkspaceOverride(originalMethod) {
-        return function () {
-            const keepAliveWorkspaces = [];
-            let foundNonEmpty = false;
-            for (let i = this._workspaces.length - 1; i >= 0; i--) {
-                if (!foundNonEmpty) {
-                    foundNonEmpty = this._workspaces[i].list_windows().some(
-                        w => !w.is_on_all_workspaces());
-                } else if (!this._workspaces[i]._keepAliveId) {
-                    keepAliveWorkspaces.push(this._workspaces[i]);
-                }
-            }
-
-            keepAliveWorkspaces.forEach(ws => (ws._keepAliveId = 1));
-            originalMethod.call(this);
-            keepAliveWorkspaces.forEach(ws => delete ws._keepAliveId);
-
-            return false;
-        };
     }
 }

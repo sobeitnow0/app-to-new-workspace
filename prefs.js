@@ -10,6 +10,7 @@ import Gtk from 'gi://Gtk';
 import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 const SETTINGS_KEY = 'application-list';
+// O workspace não é usado na lógica dinâmica, mas mantemos para compatibilidade do formato
 const WORKSPACE_MAX = 36; 
 
 class NewItem extends GObject.Object {}
@@ -28,6 +29,8 @@ class Rule extends GObject.Object {
     static [GObject.properties] = {
         'app-info': GObject.ParamSpec.object('app-info', null, null, GObject.ParamFlags.READWRITE, GioUnix.DesktopAppInfo),
         'workspace': GObject.ParamSpec.uint('workspace', null, null, GObject.ParamFlags.READWRITE, 1, WORKSPACE_MAX, 1),
+        // Nova propriedade: Rodar em segundo plano?
+        'background': GObject.ParamSpec.boolean('background', null, null, GObject.ParamFlags.READWRITE, false),
     };
     static { GObject.registerClass(this); }
 }
@@ -46,7 +49,8 @@ class RulesList extends GObject.Object {
 
     append(appInfo) {
         const pos = this.#rules.length;
-        this.#rules.push(new Rule({appInfo, workspace: 1}));
+        // Padrão: background = false (focar na janela)
+        this.#rules.push(new Rule({appInfo, workspace: 1, background: false}));
         this.#saveRules();
         this.items_changed(pos, 0, 1);
     }
@@ -59,16 +63,20 @@ class RulesList extends GObject.Object {
         this.items_changed(pos, 1, 0);
     }
 
-    changeWorkspace(id, workspace) {
+    // Atualiza quando o usuário clica no Switch
+    toggleBackground(id, isBackground) {
         const pos = this.#rules.findIndex(r => r.appInfo.get_id() === id);
         if (pos < 0) return;
-        this.#rules[pos].set({workspace});
+        this.#rules[pos].set({background: isBackground});
         this.#saveRules();
     }
 
     #saveRules() {
         this.#settings.block_signal_handler(this.#changedId);
-        this.#settings.set_strv(SETTINGS_KEY, this.#rules.map(r => `${r.app_info.get_id()}:${r.workspace}`));
+        // Salvamos no formato: "appid:workspace:background"
+        this.#settings.set_strv(SETTINGS_KEY, this.#rules.map(r => 
+            `${r.app_info.get_id()}:${r.workspace}:${r.background}`
+        ));
         this.#settings.unblock_signal_handler(this.#changedId);
     }
 
@@ -76,9 +84,13 @@ class RulesList extends GObject.Object {
         const removed = this.#rules.length;
         this.#rules = [];
         for (const stringRule of this.#settings.get_strv(SETTINGS_KEY)) {
-            const [id, workspace] = stringRule.split(':');
+            // Lemos o formato novo (com 3 partes)
+            const [id, workspace, bgString] = stringRule.split(':');
             const appInfo = GioUnix.DesktopAppInfo.new(id);
-            if (appInfo) this.#rules.push(new Rule({appInfo, workspace}));
+            // Se bgString for 'true', ativa o modo background. Se não existir (versão antiga), é false.
+            const background = (bgString === 'true');
+            
+            if (appInfo) this.#rules.push(new Rule({appInfo, workspace, background}));
         }
         this.items_changed(0, removed, this.#rules.length);
     }
@@ -94,7 +106,7 @@ class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
     constructor(settings) {
         super({
             title: _('Application List'),
-            description: _('Apps added here will open in a new workspace.'),
+            description: _('Adicione apps. Ative a chave lateral para mover em 2º plano (sem trocar de tela).'),
         });
         this._settings = settings;
         this._rules = new RulesList(this._settings);
@@ -117,7 +129,7 @@ class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
 
         this._list = new Gtk.ListBox({ selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list'] });
         this.add(this._list);
-        this._list.bind_model(listModel, item => item instanceof NewItem ? new NewRuleRow() : new RuleRow(item));
+        this._list.bind_model(listModel, item => item instanceof NewItem ? new NewRuleRow() : new RuleRow(item, this._rules));
     }
 
     _addNewRule() {
@@ -133,12 +145,29 @@ class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
 
 class RuleRow extends Adw.ActionRow {
     static { GObject.registerClass(this); }
-    constructor(rule) {
-        const {appInfo} = rule;
+    constructor(rule, rulesList) {
+        const {appInfo, background} = rule;
         const id = appInfo.get_id();
         super({ activatable: false, title: rule.appInfo.get_display_name() });
+        
         const icon = new Gtk.Image({ css_classes: ['icon-dropshadow'], gicon: appInfo.get_icon(), pixel_size: 32 });
         this.add_prefix(icon);
+
+        // --- Switch para Segundo Plano ---
+        const bgSwitch = new Gtk.Switch({
+            valign: Gtk.Align.CENTER,
+            active: background,
+            tooltip_text: _("Mover em segundo plano (não mudar de workspace)")
+        });
+        
+        bgSwitch.connect('notify::active', () => {
+             rulesList.toggleBackground(id, bgSwitch.active);
+        });
+        
+        // Adiciona o switch antes do botão de deletar
+        this.add_suffix(bgSwitch);
+        // ---------------------------------
+
         const button = new Gtk.Button({
             action_name: 'rules.remove',
             action_target: new GLib.Variant('s', id),
@@ -179,26 +208,17 @@ class NewRuleDialog extends Gtk.AppChooserDialog {
 
 export default class AutoMovePrefs extends ExtensionPreferences {
     fillPreferencesWindow(window) {
-        // --- CORREÇÃO: Carregamento Manual do Schema ---
         let settings;
         try {
-            // Tenta o método padrão primeiro
             settings = this.getSettings();
         } catch (e) {
-            // Se falhar (o erro que você está tendo), carregamos manualmente da pasta atual
             const schemaId = 'org.gnome.shell.extensions.auto-move-new-workspace';
             const schemaSource = Gio.SettingsSchemaSource.new_from_directory(
-                this.path, // 'this.path' é fornecido pela classe ExtensionPreferences
-                Gio.SettingsSchemaSource.get_default(),
-                false
-            );
+                this.path, Gio.SettingsSchemaSource.get_default(), false);
             const schema = schemaSource.lookup(schemaId, true);
-            if (!schema) {
-                throw new Error(`Schema ${schemaId} not found in ${this.path}`);
-            }
+            if (!schema) throw new Error(`Schema ${schemaId} not found`);
             settings = new Gio.Settings({ settings_schema: schema });
         }
-        // -----------------------------------------------
 
         const page = new Adw.PreferencesPage();
         const group = new AutoMoveSettingsWidget(settings);
