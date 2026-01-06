@@ -7,9 +7,10 @@ Unlike the original extension which binds apps to fixed workspace numbers, this 
 ## 🚀 Features
 
 * **Dynamic Allocation:** Automatically detects the last available workspace. If it's empty, it uses it; if not, it creates a new one.
-* **Tiling Manager Compatible:** Tuned with a strategic delay to work seamlessly alongside tiling extensions like **Mosaic**, **Forge**, or **Pop Shell**.
+* **Focus Control:** Includes a toggle option to decide whether the view follows the launched application to the new workspace or remains on the current one (background opening).
+* **Tiling Manager Compatible:** Tuned with a strategic delay to work seamlessly alongside tiling extensions like Mosaic, Forge, or Pop Shell.
 * **Smart Child Window Handling:** Detects dialogs, popups, and "Save As" windows, keeping them attached to their parent application instead of moving them away.
-* **Universal Support:** Works out-of-the-box with Native apps (`apt`/`dnf`), **Flatpaks**, and **Snaps**.
+* **Universal Support:** Works out-of-the-box with Native apps (apt/dnf), Flatpaks, and Snaps.
 * **Loop Protection:** Includes "vaccine" logic to prevent infinite workspace creation loops.
 
 ## ⚙️ Installation
